@@ -1,73 +1,51 @@
-import { NextRequest, NextResponse } from "next/server";
-import { writeFile, unlink } from "fs/promises";
-import { join } from "path";
-import { tmpdir } from "os";
-import { parse } from "formidable";
-import { pinataClient } from "@/lib/pinata";
+import { NextResponse } from 'next/server';
+import { uploadToPinata } from '@/lib/pinata';
 
-export const config = {
-  api: {
-    bodyParser: {
-      sizeLimit: "100mb",
-    },
-  },
-};
-
-export async function POST(request: NextRequest) {
+export async function POST(req: Request) {
   try {
-    // Check for JWT token
-    if (!process.env.PINATA_JWT) {
-      return NextResponse.json(
-        { error: "Pinata JWT not configured" },
-        { status: 500 }
-      );
+    const form = await req.formData();
+    const files = form.getAll('file') as File[];
+    const folderName = (form.get('folderName') as string | null) || undefined;
+
+    if (!files || files.length === 0) {
+      return NextResponse.json({ error: 'File missing' }, { status: 400 });
     }
 
-    const contentType = request.headers.get("content-type");
-    if (!contentType?.includes("multipart/form-data")) {
-      return NextResponse.json(
-        { error: "Content-Type must be multipart/form-data" },
-        { status: 400 }
+    // Detect folder upload via webkitRelativePath
+    const isFolder = (files[0] as any).webkitRelativePath;
+
+    if (isFolder || files.length > 1) {
+      // Upload multiple files with shared folder metadata
+      const firstPath = (files[0] as any).webkitRelativePath as string | undefined;
+      const derivedFolder = firstPath ? firstPath.split('/')[0] || 'upload' : `upload-${Date.now()}`;
+      const folder = folderName || derivedFolder;
+
+      const uploads = await Promise.all(
+        files.map(async (file) => {
+          const relPath = (file as any).webkitRelativePath || file.name;
+          return uploadToPinata(file, folder, relPath);
+        })
       );
-    }
 
-    // Convert NextRequest to a buffer-compatible format
-    const buffer = await request.arrayBuffer();
-    const uint8Array = new Uint8Array(buffer);
-    
-    // For this simple example, we'll create a direct upload
-    // In production, you'd parse multipart form data properly
-    const blob = new Blob([uint8Array], { type: "application/octet-stream" });
-
-    // Extract filename from request (you might get this from form data)
-    const filename = request.headers.get("x-filename") || `file-${Date.now()}`;
-    const userId = request.headers.get("x-user-id") || "anonymous";
-
-    // Upload to Pinata
-    const result = await pinataClient.uploadFile(
-      uint8Array as any,
-      filename,
-      {
-        userId,
-        uploadedAt: new Date().toISOString(),
-      }
-    );
-
-    return NextResponse.json(
-      {
+      return NextResponse.json({
         success: true,
-        ipfsHash: result.IpfsHash,
-        pinSize: result.PinSize,
-        timestamp: result.Timestamp,
-        filename,
-      },
-      { status: 200 }
-    );
+        folder,
+        count: uploads.length,
+        files: uploads.map((u) => ({ cid: u.cid })),
+      });
+    }
+
+    // Single file
+    const result = await uploadToPinata(files[0], folderName, files[0].name);
+    return NextResponse.json({
+      success: true,
+      cid: result.cid,
+      url: `https://gateway.pinata.cloud/ipfs/${result.cid}`,
+    });
   } catch (error) {
-    console.error("Upload error:", error);
-    const errorMessage = error instanceof Error ? error.message : "Failed to upload file";
+    console.error('Upload error:', error);
     return NextResponse.json(
-      { error: errorMessage },
+      { error: error instanceof Error ? error.message : 'Upload failed' },
       { status: 500 }
     );
   }

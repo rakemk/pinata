@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { pinataClient } from "@/lib/pinata";
+import { listPinataFiles, extractMeta } from "@/lib/pinata";
 
 export async function GET(
   request: NextRequest,
@@ -15,8 +15,8 @@ export async function GET(
       );
     }
 
-    // Get file info from Pinata
-    const file = await pinataClient.getFile(cid);
+    const result = await listPinataFiles(100, 0);
+    const file = result.files?.find((f: any) => f.cid === cid);
 
     if (!file) {
       return NextResponse.json(
@@ -25,18 +25,22 @@ export async function GET(
       );
     }
 
-    // Return file info and download URL
+    const meta = extractMeta(file);
+
     return NextResponse.json(
       {
         success: true,
         file: {
           id: file.id,
-          ipfsHash: file.ipfs_pin_hash,
-          name: file.metadata?.name || "Unnamed",
+          ipfsHash: file.cid,
+          name: file.name || "Unnamed",
           size: file.size,
-          uploadedAt: file.date_pinned,
-          metadata: file.metadata?.keyvalues,
-          url: pinataClient.getFileUrl(file.ipfs_pin_hash),
+          uploadedAt: meta.uploadedAt,
+          folder: meta.folder,
+          path: meta.path,
+          type: meta.type,
+          metadata: file.metadata,
+          url: `https://gateway.pinata.cloud/ipfs/${file.cid}`,
         },
       },
       { status: 200 }

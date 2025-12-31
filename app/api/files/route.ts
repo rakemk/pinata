@@ -1,55 +1,40 @@
-import { NextRequest, NextResponse } from "next/server";
-import { pinataClient } from "@/lib/pinata";
+import { NextResponse } from 'next/server';
+import { listPinataFiles, extractMeta } from '@/lib/pinata';
 
-export async function GET(request: NextRequest) {
+export async function GET(req: Request) {
   try {
-    // Check for JWT token
-    if (!process.env.PINATA_JWT) {
-      return NextResponse.json(
-        { error: "Pinata JWT not configured" },
-        { status: 500 }
-      );
-    }
+    const { searchParams } = new URL(req.url);
+    const limit = Number(searchParams.get('limit') ?? 20);
+    const offset = Number(searchParams.get('offset') ?? 0);
 
-    const searchParams = request.nextUrl.searchParams;
-    const limit = parseInt(searchParams.get("limit") || "10");
-    const offset = parseInt(searchParams.get("offset") || "0");
-    const userId = searchParams.get("userId") || "anonymous";
+    const result = await listPinataFiles(limit, offset);
 
-    // List files from Pinata
-    const result = await pinataClient.listFiles(limit, offset);
-
-    // Filter by userId if metadata contains it (optional)
-    const filteredRows = result.rows.filter((file) => {
-      const metadata = file.metadata?.keyvalues as Record<string, unknown>;
-      if (userId && userId !== "all") {
-        return metadata?.userId === userId;
-      }
-      return true;
+    const files = (result.files || []).map((file: any) => {
+      const meta = extractMeta(file);
+      return {
+        id: file.id,
+        ipfsHash: file.cid,
+        name: file.name || 'Unnamed',
+        size: file.size,
+        uploadedAt: meta.uploadedAt,
+        url: `https://gateway.pinata.cloud/ipfs/${file.cid}`,
+        folder: meta.folder,
+        path: meta.path,
+        type: meta.type,
+      };
     });
 
-    return NextResponse.json(
-      {
-        success: true,
-        count: filteredRows.length,
-        total: result.count,
-        files: filteredRows.map((file) => ({
-          id: file.id,
-          ipfsHash: file.ipfs_pin_hash,
-          name: file.metadata?.name || "Unnamed",
-          size: file.size,
-          uploadedAt: file.date_pinned,
-          metadata: file.metadata?.keyvalues,
-          url: `https://gateway.pinata.cloud/ipfs/${file.ipfs_pin_hash}`,
-        })),
-      },
-      { status: 200 }
-    );
+    const folders = Array.from(new Set(files.map((f: any) => f.folder).filter(Boolean)));
+    return NextResponse.json({
+      success: true,
+      count: files.length,
+      files,
+      folders,
+    });
   } catch (error) {
-    console.error("List files error:", error);
-    const errorMessage = error instanceof Error ? error.message : "Failed to list files";
+    console.error('List files error:', error);
     return NextResponse.json(
-      { error: errorMessage },
+      { error: error instanceof Error ? error.message : 'Failed to list files' },
       { status: 500 }
     );
   }
