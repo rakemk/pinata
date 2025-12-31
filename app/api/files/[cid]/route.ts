@@ -39,7 +39,6 @@ export async function GET(
           folder: meta.folder,
           path: meta.path,
           type: meta.type,
-          metadata: file.metadata,
           url: `https://gateway.pinata.cloud/ipfs/${file.cid}`,
         },
       },
