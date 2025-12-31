@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import crypto from "crypto";
 
 export async function GET(
-  request: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ cid: string }> }
 ) {
   const { cid } = await params;
-
   try {
     if (!cid) {
       return NextResponse.json(
@@ -14,24 +14,35 @@ export async function GET(
       );
     }
 
-    const domain = process.env.NEXT_PUBLIC_GATEWAY_URL;
-    const token = process.env.GATEWAY_TOKEN;
+    const gatewayUrl = process.env.PINATA_GATEWAY || "gateway.pinata.cloud";
+    const pinataSecret = process.env.PINATA_API_SECRET;
 
-    if (!domain || !token) {
+    if (!pinataSecret) {
       return NextResponse.json(
-        { error: "Gateway configuration missing" },
+        { error: "PINATA_API_SECRET is not configured. Add it to .env.local" },
         { status: 500 }
       );
     }
 
-    // Construct URL with gateway token
-    const url = `https://${domain}/ipfs/${cid}?pinataGatewayToken=${token}`;
-    
-    console.log(`Created signed URL for CID: ${cid}`);
+    // Get expiration time from query or default to 1 hour from now
+    const expiresIn = parseInt(req.nextUrl.searchParams.get("expiresIn") || "3600");
+    const expires = Math.floor(Date.now() / 1000) + expiresIn;
+
+    // Create signature: HMAC-SHA256 of CID + expires
+    const data = `${cid}${expires}`;
+    const signature = crypto
+      .createHmac("sha256", pinataSecret)
+      .update(data)
+      .digest("hex");
+
+    // Construct signed URL
+    const url = `https://${gatewayUrl}/ipfs/${cid}?expires=${expires}&signature=${signature}`;
 
     return NextResponse.json({
       success: true,
       url: url,
+      expires: expires,
+      signature: signature,
     });
   } catch (error) {
     console.error("Signed URL error:", error);

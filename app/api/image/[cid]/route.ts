@@ -1,61 +1,36 @@
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(
-  request: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ cid: string }> }
 ) {
   const { cid } = await params;
-  const gatewayUrl = process.env.NEXT_PUBLIC_GATEWAY_URL;
-  const gatewayToken = process.env.GATEWAY_TOKEN;
-
   try {
-    if (!cid) {
-      return NextResponse.json(
-        { error: "CID parameter is required" },
-        { status: 400 }
-      );
-    }
+    const gatewayUrl = process.env.PINATA_GATEWAY || "gateway.pinata.cloud";
+    const url = `https://${gatewayUrl}/ipfs/${cid}`;
 
-    if (!gatewayUrl || !gatewayToken) {
-      return NextResponse.json(
-        { error: "Gateway configuration missing" },
-        { status: 500 }
-      );
-    }
-
-    // Fetch from Pinata using Gateway Token in header to bypass 403 errors
-    const response = await fetch(
-      `https://${gatewayUrl}/ipfs/${cid}`,
-      {
-        method: "GET",
-        headers: {
-          "x-pinata-gateway-token": gatewayToken,
-        },
-      }
-    );
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${process.env.PINATA_JWT}`,
+      },
+    });
 
     if (!response.ok) {
-      console.error(`Gateway responded with ${response.status}`);
-      return NextResponse.json(
-        { error: `Pinata error: ${response.statusText}` },
-        { status: response.status }
-      );
+      throw new Error(`Pinata error ${response.status}`);
     }
 
     const buffer = await response.arrayBuffer();
-    const contentType = response.headers.get("content-type") || "image/png";
 
     return new NextResponse(buffer, {
       headers: {
-        "Content-Type": contentType,
-        "Cache-Control": "public, max-age=31536000, immutable",
+        "Content-Type": response.headers.get("content-type") || "image/jpeg",
+        "Cache-Control": "private, max-age=3600",
       },
     });
-  } catch (error) {
-    console.error("Get image error:", error);
+  } catch (err: any) {
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Internal Server Error" },
-      { status: 500 }
+      { error: "Private file not accessible" },
+      { status: 403 }
     );
   }
 }
