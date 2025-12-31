@@ -41,15 +41,12 @@ export async function uploadFolderToPinata(files: File[], folderName?: string) {
 }
 
 export async function listPinataFiles(limit = 100, offset = 0) {
-  const result = await pinata.files.private.list({
-    pageLimit: limit,
-    pageOffset: offset,
-  });
+  const result = await pinata.files.private.list();
   return result;
 }
 
 export function extractMeta(file: any) {
-  const kv = file.metadata?.keyvalues || {};
+  const kv = (file as any).metadata?.keyvalues || {};
   return {
     folder: kv.folder || 'root',
     path: kv.path || file.name,
