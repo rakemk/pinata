@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import crypto from "crypto";
+import { PinataSDK } from "pinata";
 
 export async function GET(
   req: NextRequest,
@@ -14,41 +14,42 @@ export async function GET(
       );
     }
 
-    const gatewayUrl = process.env.PINATA_GATEWAY || "gateway.pinata.cloud";
-    const pinataSecret = process.env.PINATA_API_SECRET;
+    const pinataJwt = process.env.PINATA_JWT;
+    const pinataGateway = process.env.PINATA_GATEWAY || "gateway.pinata.cloud";
 
-    if (!pinataSecret) {
+    if (!pinataJwt) {
       return NextResponse.json(
-        { error: "PINATA_API_SECRET is not configured. Add it to .env.local" },
+        { error: "PINATA_JWT is not configured. Add it to .env.local" },
         { status: 500 }
       );
     }
 
-    // Get expiration time from query or default to 1 hour from now
+    // Initialize Pinata SDK
+    const pinata = new PinataSDK({
+      pinataJwt: pinataJwt,
+      pinataGateway: pinataGateway,
+    });
+
+    // Get expiration time from query or default to 1 hour (in seconds)
     const expiresIn = parseInt(req.nextUrl.searchParams.get("expiresIn") || "3600");
-    const expires = Math.floor(Date.now() / 1000) + expiresIn;
 
-    // Create signature: HMAC-SHA256 of CID + expires
-    const data = `${cid}${expires}`;
-    const signature = crypto
-      .createHmac("sha256", pinataSecret)
-      .update(data)
-      .digest("hex");
-
-    // Construct signed URL
-    const url = `https://${gatewayUrl}/ipfs/${cid}?expires=${expires}&signature=${signature}`;
+    // Create signed URL using Pinata SDK
+    const signedUrl = await pinata.gateways.private.createAccessLink({
+      cid: cid,
+      expires: expiresIn,
+    });
 
     return NextResponse.json({
       success: true,
-      url: url,
-      expires: expires,
-      signature: signature,
+      url: signedUrl,
+      expiresIn: expiresIn,
     });
   } catch (error) {
     console.error("Signed URL error:", error);
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Failed to create signed URL",
+        details: error instanceof Error ? error.stack : undefined,
       },
       { status: 500 }
     );
