@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { PinataSDK } from "pinata";
+import { getSignedUrl } from "@/lib/pinata";
 
 export async function GET(
   req: NextRequest,
@@ -14,30 +14,11 @@ export async function GET(
       );
     }
 
-    const pinataJwt = process.env.PINATA_JWT;
-    const pinataGateway = process.env.PINATA_GATEWAY || "gateway.pinata.cloud";
+    // Get expiration time from query or default to 60 seconds
+    const expiresIn = parseInt(req.nextUrl.searchParams.get("expiresIn") || "60");
 
-    if (!pinataJwt) {
-      return NextResponse.json(
-        { error: "PINATA_JWT is not configured. Add it to .env.local" },
-        { status: 500 }
-      );
-    }
-
-    // Initialize Pinata SDK
-    const pinata = new PinataSDK({
-      pinataJwt: pinataJwt,
-      pinataGateway: pinataGateway,
-    });
-
-    // Get expiration time from query or default to 1 hour (in seconds)
-    const expiresIn = parseInt(req.nextUrl.searchParams.get("expiresIn") || "3600");
-
-    // Create signed URL using Pinata SDK
-    const signedUrl = await pinata.gateways.private.createAccessLink({
-      cid: cid,
-      expires: expiresIn,
-    });
+    // Use the refactored Pinata service
+    const signedUrl = await getSignedUrl(cid, expiresIn);
 
     return NextResponse.json({
       success: true,
@@ -49,7 +30,6 @@ export async function GET(
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Failed to create signed URL",
-        details: error instanceof Error ? error.stack : undefined,
       },
       { status: 500 }
     );

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { PinataSDK } from "pinata";
+import { getSignedUrl } from "@/lib/pinata";
 
 export async function GET(
   req: NextRequest,
@@ -7,27 +7,8 @@ export async function GET(
 ) {
   const { cid } = await params;
   try {
-    const pinataJwt = process.env.PINATA_JWT;
-    const pinataGateway = process.env.PINATA_GATEWAY || "gateway.pinata.cloud";
-
-    if (!pinataJwt) {
-      return NextResponse.json(
-        { error: "PINATA_JWT is not configured" },
-        { status: 500 }
-      );
-    }
-
-    // Initialize Pinata SDK
-    const pinata = new PinataSDK({
-      pinataJwt: pinataJwt,
-      pinataGateway: pinataGateway,
-    });
-
-    // Create signed URL for private file (valid for 1 hour)
-    const signedUrl = await pinata.gateways.private.createAccessLink({
-      cid: cid,
-      expires: 3600, // 1 hour
-    });
+    // Create signed URL for private file (valid for 1 hour for preview/proxy)
+    const signedUrl = await getSignedUrl(cid, 3600);
 
     // Fetch the file data using the signed URL
     const response = await fetch(signedUrl);

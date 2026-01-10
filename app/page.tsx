@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import Image from "next/image";
 
 interface FileItem {
@@ -13,12 +13,13 @@ interface FileItem {
   isImage: boolean;
   folder?: string;
   path?: string;
+  thumbnail?: string;
 }
 
 export default function Home() {
   const [files, setFiles] = useState<FileItem[]>([]);
   const [folders, setFolders] = useState<string[]>([]);
-  const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
+  const [currentPath, setCurrentPath] = useState<string>("root");
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -30,32 +31,28 @@ export default function Home() {
   // Fetch files on mount
   useEffect(() => {
     fetchFiles();
-  }, [selectedFolder]);
+  }, [currentPath]);
 
   const fetchFiles = async () => {
     setLoading(true);
     setError(null);
     try {
-      const folderParam = selectedFolder ? `&folder=${encodeURIComponent(selectedFolder)}` : '';
-      const response = await fetch(`/api/files?limit=100&offset=0${folderParam}`);
-      
+      const response = await fetch(`/api/files?limit=100&offset=0&folder=${encodeURIComponent(currentPath)}`);
+
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
-      
+
       const text = await response.text();
       if (!text) {
         throw new Error('Empty response from server');
       }
-      
+
       const data = JSON.parse(text);
 
       if (data.success) {
         setFolders(data.folders || []);
-        setFiles((data.files || []).map((file: any) => ({
-          ...file,
-          isImage: /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(file.name),
-        })));
+        setFiles(data.files || []);
       } else {
         setError(data.error || "Failed to fetch files");
       }
@@ -88,9 +85,13 @@ export default function Home() {
     try {
       const formData = new FormData();
       filesArray.forEach((file) => formData.append('file', file));
-      if (basePath) {
-        formData.append('folderName', basePath);
-      }
+
+      // Determine the upload path: currentPath + basePath
+      const uploadFolder = basePath
+        ? (currentPath === 'root' ? basePath : `${currentPath}/${basePath}`)
+        : currentPath;
+
+      formData.append('folderName', uploadFolder);
 
       const response = await fetch("/api/upload", {
         method: "POST",
@@ -100,12 +101,12 @@ export default function Home() {
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
-      
+
       const text = await response.text();
       if (!text) {
         throw new Error('Empty response from server');
       }
-      
+
       const data = JSON.parse(text);
 
       if (data.success) {
@@ -122,11 +123,33 @@ export default function Home() {
     }
   };
 
+  const handlePreview = async (file: FileItem) => {
+    try {
+      setError(null);
+      setSuccess(null);
+
+      // Get the signed URL from backend
+      const res = await fetch(`/api/signed-url/${file.ipfsHash}`);
+      const data = await res.json();
+
+      if (!res.ok || !data.url) {
+        throw new Error(data.error || data.details || "Failed to get signed URL");
+      }
+
+      // Open the signed URL directly in a new tab
+      window.open(data.url, '_blank');
+      setSuccess(`Opening preview for: ${file.name}`);
+    } catch (err) {
+      console.error("Preview Error:", err);
+      setError(err instanceof Error ? err.message : "Preview failed");
+    }
+  };
+
   const handleDownload = async (file: FileItem) => {
     try {
       setError(null);
       console.log(`Downloading file: ${file.name} (${file.ipfsHash})`);
-      
+
       // 1. Get the signed URL from backend
       const res = await fetch(`/api/signed-url/${file.ipfsHash}`);
       const data = await res.json();
@@ -143,10 +166,10 @@ export default function Home() {
       if (!fileRes.ok) {
         throw new Error(`File data not found on gateway (${fileRes.status})`);
       }
-      
+
       const blob = await fileRes.blob();
       console.log(`Downloaded blob: ${blob.size} bytes, type: ${blob.type}`);
-      
+
       const blobUrl = URL.createObjectURL(blob);
 
       // 3. Trigger the download
@@ -155,11 +178,11 @@ export default function Home() {
       link.download = file.name || `download-${file.ipfsHash}.png`;
       document.body.appendChild(link);
       link.click();
-      
+
       // Cleanup
       document.body.removeChild(link);
       URL.revokeObjectURL(blobUrl);
-      
+
       setSuccess(`Downloaded: ${file.name}`);
     } catch (err) {
       console.error("Download Error:", err);
@@ -280,34 +303,42 @@ export default function Home() {
 
         {/* Files List Section */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-xl font-semibold text-gray-900">Files</h2>
+          {/* Breadcrumbs */}
+          <div className="flex items-center gap-2 mb-6 text-sm">
             <button
-              onClick={fetchFiles}
-              disabled={loading}
-              className="text-sm text-blue-600 hover:underline disabled:opacity-60"
+              onClick={() => setCurrentPath("root")}
+              className={`hover:text-blue-600 ${currentPath === "root" ? "text-gray-900 font-bold" : "text-blue-500"}`}
             >
-              Refresh
+              Root
             </button>
+            {currentPath !== "root" && currentPath.split('/').map((segment, idx, arr) => (
+              <React.Fragment key={idx}>
+                <span className="text-gray-400">/</span>
+                <button
+                  onClick={() => setCurrentPath(arr.slice(0, idx + 1).join('/'))}
+                  className={`hover:text-blue-600 ${idx === arr.length - 1 ? "text-gray-900 font-bold" : "text-blue-500"}`}
+                >
+                  {segment}
+                </button>
+              </React.Fragment>
+            ))}
           </div>
 
-          <div className="mb-6 text-sm text-blue-600 cursor-pointer" onClick={() => setSelectedFolder(null)}>
-            Root
-          </div>
-
-          {/* Folders */}
-          {folders.length > 0 && !selectedFolder && (
+          {/* Folders List */}
+          {folders.length > 0 && (
             <div className="mb-8">
-              <h3 className="text-lg font-semibold text-gray-900 mb-3">Folders ({folders.length})</h3>
-              <div className="space-y-2">
+              <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Folders</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                 {folders.map((folder) => (
                   <button
                     key={folder}
-                    onClick={() => setSelectedFolder(folder)}
-                    className="w-full flex justify-between items-center px-4 py-3 bg-gray-50 hover:bg-gray-100 rounded border border-gray-200"
+                    onClick={() => setCurrentPath(currentPath === "root" ? folder : `${currentPath}/${folder}`)}
+                    className="flex items-center gap-3 px-4 py-3 bg-gray-50 hover:bg-white hover:shadow-md transition-all rounded-lg border border-gray-200 text-left group"
                   >
-                    <span className="text-blue-600">{folder}</span>
-                    <span className="text-xs text-gray-500">{folder}</span>
+                    <span className="text-2xl group-hover:scale-110 transition-transform">📁</span>
+                    <div className="min-w-0">
+                      <p className="font-medium text-gray-900 truncate">{folder}</p>
+                    </div>
                   </button>
                 ))}
               </div>
@@ -315,27 +346,50 @@ export default function Home() {
           )}
 
           {loading ? (
-            <div className="text-center py-8 text-gray-600">Loading files...</div>
+            <div className="text-center py-12">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+              <p className="text-gray-500">Scanning directory...</p>
+            </div>
           ) : files.length === 0 ? (
-            <div className="text-center py-8 text-gray-600">No files uploaded yet.</div>
+            <div className="text-center py-12 bg-gray-50 rounded-xl border-2 border-dashed border-gray-200">
+              <p className="text-gray-500 italic">This folder is empty</p>
+            </div>
           ) : (
             <div className="space-y-3">
+              <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Files</h3>
               {files.map((file) => (
                 <div
                   key={file.ipfsHash}
                   className="flex items-center justify-between p-4 bg-gray-50 rounded border border-gray-200"
                 >
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-gray-900 truncate">{file.name}</p>
-                    <p className="text-sm text-gray-600">
-                      {formatFileSize(file.size)} • {file.isImage ? 'image' : 'file'}
-                    </p>
-                    <p className="text-xs text-gray-500">Created: {formatDate(file.uploadedAt)}</p>
+                  <div className="flex items-center flex-1 min-w-0">
+                    {file.isImage && file.thumbnail ? (
+                      <div className="w-12 h-12 rounded bg-gray-200 overflow-hidden mr-4 flex-shrink-0">
+                        <img
+                          src={file.thumbnail}
+                          alt={file.name}
+                          width={48}
+                          height={48}
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                    ) : (
+                      <div className="w-12 h-12 rounded bg-gray-200 mr-4 flex-shrink-0 flex items-center justify-center text-gray-400">
+                        {file.isImage ? '🖼️' : '📄'}
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <p className="font-medium text-gray-900 truncate">{file.name}</p>
+                      <p className="text-sm text-gray-600">
+                        {formatFileSize(file.size)} • {file.isImage ? 'image' : 'file'}
+                      </p>
+                      <p className="text-xs text-gray-500">Created: {formatDate(file.uploadedAt)}</p>
+                    </div>
                   </div>
                   <div className="flex gap-2 ml-4">
                     {file.isImage && (
                       <button
-                        onClick={() => window.open(`/api/image/${file.ipfsHash}`, '_blank')}
+                        onClick={() => handlePreview(file)}
                         className="px-4 py-2 bg-green-600 text-white text-sm rounded hover:bg-green-700"
                       >
                         Preview
